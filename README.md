@@ -43,22 +43,13 @@ the car class at the moderate level.
       <td></td>
    </tr>
    <tr>
-      <td></td>
-      <td>Easy </td>
-      <td>Moderate</td>
-      <td>Hard</td>
-      <td>Easy </td>
-      <td>Moderate</td>
-      <td>Hard</td>
-   </tr>
-   <tr>
       <td>Radar</td>
-      <td></td>
-      <td></td>
-      <td></td>
-      <td></td>
-      <td></td>
-      <td></td>
+      <td>Easy </td>
+      <td>Moderate</td>
+      <td>Hard</td>
+      <td>Easy </td>
+      <td>Moderate</td>
+      <td>Hard</td>
    </tr>
    <tr>
       <td>PointRCNN </td>
@@ -161,6 +152,32 @@ the car class at the moderate level.
    </tr>
 </table>
 
+## Installation
+a. Clone this repository.
+```shell
+git clone https://github.com/adept-thu/InterFusion.git
+```
+
+b. Install the dependent libraries as follows:
+
+* Install the dependent python libraries: 
+```
+pip install -r requirements.txt 
+```
+c. Generate dataloader
+```
+python -m pcdet.datasets.astyx.astyx_dataset create_astyx_infos tools/cfgs/dataset_configs/astyx_dataset.yaml
+```
+
+## Training
+```
+CUDA_VISIBLE_DEVICES=1 python train.py --cfg_file cfgs/astyx_models/pointpillar.yaml --tcp_port 25851 --extra_tag yourmodelname
+```
+
+## Testing
+```
+python test.py --cfg_file cfgs/astyx_models/pointpillar.yaml --batch_size 4 --ckpt ##astyx_models/pointpillar/debug/ckpt/checkpoint_epoch_80.pth
+```
 
 ## Citation 
 If you find this project useful in your research, please consider cite:
