@@ -5,10 +5,16 @@ class AnchorGenerator(object):
     def __init__(self, anchor_range, anchor_generator_config):
         super().__init__()
         self.anchor_generator_cfg = anchor_generator_config
+        # Get the distribution range of anchor in the point cloud.
         self.anchor_range = anchor_range
+        # Get the length, width and height of the anchor for all scales in the configuration parameters.
         self.anchor_sizes = [config['anchor_sizes'] for config in anchor_generator_config]
+        # Get the rotation angle of the anchor, including 0 degrees or 90 degrees.
         self.anchor_rotations = [config['anchor_rotations'] for config in anchor_generator_config]
+        # Get the coordinate position of each anchor in the z-axis direction in the point cloud after initialization.
         self.anchor_heights = [config['anchor_bottom_heights'] for config in anchor_generator_config]
+        # Determines whether each generated precedence box needs to be in the center of each grid,
+        # the default result is False.
         self.align_center = [config.get('align_center', False) for config in anchor_generator_config]
 
         assert len(self.anchor_sizes) == len(self.anchor_rotations) == len(self.anchor_heights)
@@ -16,29 +22,43 @@ class AnchorGenerator(object):
 
     def generate_anchors(self, grid_sizes):
         assert len(grid_sizes) == self.num_of_anchor_sets
+        # initialize the parameters
         all_anchors = []
         num_anchors_per_location = []
+        # Generate a priori boxes for each of the three categories in sequence by category.
         for grid_size, anchor_size, anchor_rotation, anchor_height, align_center in zip(
                 grid_sizes, self.anchor_sizes, self.anchor_rotations, self.anchor_heights, self.align_center):
 
+            # Each position produces two anchors in different directions.
             num_anchors_per_location.append(len(anchor_rotation) * len(anchor_size) * len(anchor_height))
             if align_center:
                 x_stride = (self.anchor_range[3] - self.anchor_range[0]) / grid_size[0]
                 y_stride = (self.anchor_range[4] - self.anchor_range[1]) / grid_size[1]
+                # Align the center of the a priori box with the center of the grid it is on in one direction,
+                # and then translate half the grid.
                 x_offset, y_offset = x_stride / 2, y_stride / 2
             else:
+                # The calculation is performed to obtain the actual size of each mesh in the point cloud space,
+                # and then the calculation results are used to map each anchor to the size in the actual point cloud.
                 x_stride = (self.anchor_range[3] - self.anchor_range[0]) / (grid_size[0] - 1)
                 y_stride = (self.anchor_range[4] - self.anchor_range[1]) / (grid_size[1] - 1)
+                # Since there is no center alignment operation,
+                # the relative offset of each point with respect to the coordinates of the upper left vertex of the grid is 0.
                 x_offset, y_offset = 0, 0
 
+            # Generate single dimensions x_shifts, y_shifts, z_shifts.
+            # generate the x-value of the coordinates
             x_shifts = torch.arange(
                 self.anchor_range[0] + x_offset, self.anchor_range[3] + 1e-5, step=x_stride, dtype=torch.float32,
             ).cuda()
+            # generate the y-value of the coordinates
             y_shifts = torch.arange(
                 self.anchor_range[1] + y_offset, self.anchor_range[4] + 1e-5, step=y_stride, dtype=torch.float32,
             ).cuda()
+            # generate the z-value of the coordinates
             z_shifts = x_shifts.new_tensor(anchor_height)
 
+            #
             num_anchor_size, num_anchor_rotation = anchor_size.__len__(), anchor_rotation.__len__()
             anchor_rotation = x_shifts.new_tensor(anchor_rotation)
             anchor_size = x_shifts.new_tensor(anchor_size)

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from .vfe_template import VFETemplate
 
-
+# This section is similar to a simplified version of PointNet.
 class interRAL(nn.Module):
     def __init__(self, channels):
         super(interRAL, self).__init__()
@@ -47,8 +47,8 @@ class PFNLayer(nn.Module):
             out_channels = out_channels // 2
 
         if self.use_norm:
-            self.linear = nn.Linear(in_channels, out_channels, bias=False)
-            self.norm = nn.BatchNorm1d(out_channels, eps=1e-3, momentum=0.01)
+            self.linear = nn.Linear(in_channels, out_channels, bias=False)      # ascend dimension with 64 output channels
+            self.norm = nn.BatchNorm1d(out_channels, eps=1e-3, momentum=0.01)   # 1D BN layer
         else:
             self.linear = nn.Linear(in_channels, out_channels, bias=True)
 
@@ -62,14 +62,17 @@ class PFNLayer(nn.Module):
                                for num_part in range(num_parts+1)]
             x = torch.cat(part_linear_out, dim=0)
         else:
-            x = self.linear(inputs)
+            x = self.linear(inputs)     # ascend the demension
         torch.backends.cudnn.enabled = False
+        # change dimensions, (pillars,num_points,channels) -> (pillars,channels,num_points)
         x = self.norm(x.permute(0, 2, 1)).permute(0, 2, 1) if self.use_norm else x
         torch.backends.cudnn.enabled = True
         x = F.relu(x)
+        # maxpool operation, and find the point in each pillar that best represents the pillar
         x_max = torch.max(x, dim=1, keepdim=True)[0]
 
         if self.last_vfe:
+            # return the results obtained by processing the pillar from a simplified version of PointNet
             return x_max
         else:
             x_repeat = x_max.repeat(1, inputs.shape[1], 1)
@@ -78,6 +81,16 @@ class PFNLayer(nn.Module):
 
 
 class PillarVFE(VFETemplate):
+    """
+    model_cfg: NAME: PillarVFE
+                     WITH_DISTANCE: False
+                     USE_ABSLOTE_XYZ: True
+                     NUM_FILTERS: [64]
+    num_point_features: 4
+    voxel_size: [0.16 0.16 4]
+    POINT_CLOUD_RANGE: []
+    """
+
     def __init__(self, model_cfg, num_point_features, voxel_size, point_cloud_range):
         super().__init__(model_cfg=model_cfg)
 
@@ -97,8 +110,10 @@ class PillarVFE(VFETemplate):
             in_filters = num_filters[i]
             out_filters = num_filters[i + 1]
             pfn_layers.append(
-                PFNLayer(in_filters, out_filters, self.use_norm, last_layer=(i >= len(num_filters) - 2))
+                PFNLayer(in_filters, out_filters, self.use_norm,
+                    last_layer=(i >= len(num_filters) - 2))
             )
+        # add linear layers to increase the number of features
         self.pfn_layers = nn.ModuleList(pfn_layers)
 
         self.voxel_x = voxel_size[0]
@@ -107,12 +122,21 @@ class PillarVFE(VFETemplate):
         self.x_offset = self.voxel_x / 2 + point_cloud_range[0]
         self.y_offset = self.voxel_y / 2 + point_cloud_range[1]
         self.z_offset = self.voxel_z / 2 + point_cloud_range[2]
-        self.interral = interRAL(64)
+        self.interral = interRAL(64)    # set the channel number of interRAL
 
     def get_output_feature_dim(self):
         return self.num_filters[-1]
 
     def get_paddings_indicator(self, actual_num, max_num, axis=0):
+        """
+        Args:
+            actual_num: number of actual points per voxel
+            max_num: the maximum number of voxel points
+        Returns:
+            paddings_indicator: Determine whether the data in the pillar is the real data or the filled value 0
+        """
+
+        # Extending a dimension
         actual_num = torch.unsqueeze(actual_num, axis + 1)
         max_num_shape = [1] * len(actual_num.shape)
         max_num_shape[axis + 1] = -1
@@ -122,37 +146,70 @@ class PillarVFE(VFETemplate):
 
     def forward(self, batch_dict, **kwargs):
         if 'voxels' in batch_dict:
-            voxel_features, voxel_num_points, coords = batch_dict['voxels'], batch_dict['voxel_num_points'], batch_dict['voxel_coords']
-            points_mean = voxel_features[:, :, :3].sum(dim=1, keepdim=True) / voxel_num_points.type_as(voxel_features).view(-1, 1, 1)
+            voxel_features, voxel_num_points, coords = batch_dict['voxels'],
+                                                    batch_dict['voxel_num_points'], batch_dict['voxel_coords']
+            # Summing all point clouds in each pillar.
+            # if keepdim=True is set, the original dimension information will be kept.
+            # Divide the summation information by the number of points in each point cloud to get the average of all point clouds in each pillar.
+            points_mean = voxel_features[:, :, :3].sum(dim=1, keepdim=True) /
+                        voxel_num_points.type_as(voxel_features).view(-1, 1, 1)
+            
+            # Subtract the average value of the corresponding pillar from each point cloud data to get the difference.
             f_cluster = voxel_features[:, :, :3] - points_mean
+            
+            # Resume the null data for each point cloud to the centroid offset of this pillar coordinate.
             f_center = torch.zeros_like(voxel_features[:, :, :3])
 
-            f_center[:, :, 0] = voxel_features[:, :, 0] - (coords[:, 3].to(voxel_features.dtype).unsqueeze(1) * self.voxel_x + self.x_offset)
-            f_center[:, :, 1] = voxel_features[:, :, 1] - (coords[:, 2].to(voxel_features.dtype).unsqueeze(1) * self.voxel_y + self.y_offset)
-            f_center[:, :, 2] = voxel_features[:, :, 2] - (coords[:, 1].to(voxel_features.dtype).unsqueeze(1) * self.voxel_z + self.z_offset)
+            # The coordinates (coords) of each grid point multiplied by the length and width of each pillar,
+            # then we can obtain the actual length and width of the point cloud data (in m).
+            # Add half of the length and width of each pillar to obtain the centroid coordinates of each pillar.
+            # Subtract the centroid coordinates of the corresponding pillar from the x, y, and z of each point,
+            # then we get the offset from each point to the centroid of the corresponding each point.
+            f_center[:, :, 0] = voxel_features[:, :, 0] - (
+                            coords[:, 3].to(voxel_features.dtype).unsqueeze(1) * self.voxel_x + self.x_offset)
+            f_center[:, :, 1] = voxel_features[:, :, 1] - (
+                            coords[:, 2].to(voxel_features.dtype).unsqueeze(1) * self.voxel_y + self.y_offset)
+            f_center[:, :, 2] = voxel_features[:, :, 2] - (
+                            coords[:, 1].to(voxel_features.dtype).unsqueeze(1) * self.voxel_z + self.z_offset)
 
+            # If the coordinates are absolute, splice the parts directly.
             if self.use_absolute_xyz:
                 features = [voxel_features, f_cluster, f_center]
+            # Otherwise, convert the voxel_features to 3D coordinates and then stitch the parts together.
             else:
                 features = [voxel_features[..., 3:], f_cluster, f_center]
 
+            # use distance information
             if self.with_distance:
+                # In torch.norm function, the first 2 indicates solving L2 parametrization,
+                # and the second 2 indicates solving parametrization in the third dimension.
                 points_dist = torch.norm(voxel_features[:, :, :3], 2, 2, keepdim=True)
                 features.append(points_dist)
+            # splice features in the last dimension
             features = torch.cat(features, dim=-1)
 
+            # maximum number of point clouds in each pillar
             voxel_count = features.shape[1]
+            
+            # get the mask dimension
+            # The mask specifies the data that should be retained in each pillar.
             mask = self.get_paddings_indicator(voxel_num_points, voxel_count, axis=0)
+
+            # up-dimensioning the mask
             mask = torch.unsqueeze(mask, -1).type_as(voxel_features)
+
+            # set all features of the populated data in features to 0
             features *= mask
 
             for pfn in self.pfn_layers:
                 features = pfn(features)
-            features = features.squeeze()
 
+            # abstract a 64-dimensional feature in each pillar
+            features = features.squeeze()
             batch_dict['pillar_features'] = features
 
         else:
+            # Process the information of different modalities in sequence and generate the results.
             lidar_voxel_features, lidar_voxel_num_points, lidar_coords = batch_dict['lidar_voxels'], batch_dict['lidar_voxel_num_points'], batch_dict['lidar_voxel_coords']
             radar_voxel_features, radar_voxel_num_points, radar_coords = batch_dict['radar_voxels'], batch_dict['radar_voxel_num_points'], batch_dict['radar_voxel_coords']
             lidar_points_mean = lidar_voxel_features[:, :, :3].sum(dim=1, keepdim=True) / lidar_voxel_num_points.type_as(lidar_voxel_features).view(-1, 1, 1)
@@ -213,4 +270,5 @@ class PillarVFE(VFETemplate):
 
             batch_dict['lidar_pillar_features'] = lidar_features
             batch_dict['radar_pillar_features'] = radar_features
+        
         return batch_dict

@@ -16,29 +16,46 @@ class PointPillarScatter(nn.Module):
     def forward(self, batch_dict, **kwargs):
         if 'pillar_features' in batch_dict:
             pillar_features, coords = batch_dict['pillar_features'], batch_dict['voxel_coords']
+
+            # Store the data converted to pseudo-images in this list.
             batch_spatial_features = []
             batch_size = coords[:, 0].max().int().item() + 1
 
+            # Process each piece of data in the batch sequentially and independently.
             for batch_idx in range(batch_size):
+                # Create a spatial coordinate to receive the data from the pillar.
+                # num_bev_features: the value is 64
+                # self.nz * self.nx * self.ny: the product of the generated spatial coordinate indices
+                # pillar feature:
                 spatial_feature = torch.zeros(
                     self.num_bev_features,
                     self.nz * self.nx * self.ny,
                     dtype=pillar_features.dtype,
                     device=pillar_features.device)
 
+                # Extract the data mask of batch_idx from coords[:,0]
                 batch_mask = coords[:, 0] == batch_idx
+                # Extracting coordinate information based on mask
                 this_coords = coords[batch_mask, :]
+                # Get the position of all the indexes corresponding to the non-empty pillar on the pseudo-image.
                 indices = this_coords[:, 1] + this_coords[:, 2] * self.nx + this_coords[:, 3]
-                indices = indices.type(torch.long)
+                indices = indices.type(torch.long)      # converting data types
+                # Extract the pillar_feature based on mask.
                 pillars = pillar_features[batch_mask, :]
                 pillars = pillars.t()
+                # Fill in the index position with pillars.
                 spatial_feature[:, indices] = pillars
+                # Add spatial features to the list.
                 batch_spatial_features.append(spatial_feature)
 
+            # Stack all data in dimension 0
             batch_spatial_features = torch.stack(batch_spatial_features, 0)
+            # reshape back to the original space, i.e. pseudo-image
             batch_spatial_features = batch_spatial_features.view(batch_size, self.num_bev_features * self.nz, self.ny, self.nx)
+            # Add the results to batch_dict
             batch_dict['spatial_features'] = batch_spatial_features
         else:
+            # Process the information of different modalities in sequence and generate the results.
             lidar_pillar_features, lidar_coords = batch_dict['lidar_pillar_features'], batch_dict['lidar_voxel_coords']
             radar_pillar_features, radar_coords = batch_dict['radar_pillar_features'], batch_dict['radar_voxel_coords']
             lidar_batch_spatial_features = []
