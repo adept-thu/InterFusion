@@ -27,7 +27,7 @@ def cfg_from_list(cfg_list, config):
         assert subkey in d, 'NotFoundKey: %s' % subkey
         try:
             value = literal_eval(v)
-        except:
+        except:    # handle the case when v is a string literal
             value = v
 
         if type(value) != type(d[subkey]) and isinstance(d[subkey], EasyDict):

@@ -57,6 +57,7 @@ class DataProcessor(object):
         return data_dict
 
     def transform_points_to_voxels(self, data_dict=None, config=None, voxel_generator=None):
+        # Initialize the parameters needed to convert the point cloud to a pillar.
         if data_dict is None:
             try:
                 from spconv.utils import VoxelGeneratorV2 as VoxelGenerator
@@ -76,7 +77,13 @@ class DataProcessor(object):
 
         if 'points' in data_dict:
             points = data_dict['points']
+            # Generate the output of the pillar.
             voxel_output = voxel_generator.generate(points)
+            # voxels: data of each generated pillar, represented by the dimension tensor as [M,32,4].
+            # coordinates: the right-angle coordinates of each generated pillar,
+            # represented by the dimension tensor as [M,3], where the third dimension is always 0, i.e. z=0.
+            # num_points: the number of valid points in each generated pillar, expressed as [M,] in the dimension tensor,
+            # which is filled to 0 when the value of the second dimension is less than 32.
             if isinstance(voxel_output, dict):
                 voxels, coordinates, num_points = \
                     voxel_output['voxels'], voxel_output['coordinates'], voxel_output['num_points_per_voxel']
@@ -86,6 +93,7 @@ class DataProcessor(object):
             if not data_dict['use_lead_xyz']:
                 voxels = voxels[..., 3:]  # remove xyz in voxels(N, 3)
         else:
+            # Generate output voxel_output for different modalities in sequence.
             lidar_points = data_dict['lidar_points']
             radar_points = data_dict['radar_points']
             lidar_voxel_output = voxel_generator.generate(lidar_points)

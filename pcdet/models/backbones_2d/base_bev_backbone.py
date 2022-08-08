@@ -8,14 +8,17 @@ class BaseBEVBackbone(nn.Module):
         super().__init__()
         self.model_cfg = model_cfg
 
+        # read downsampling parameters
         if self.model_cfg.get('LAYER_NUMS', None) is not None:
-            assert len(self.model_cfg.LAYER_NUMS) == len(self.model_cfg.LAYER_STRIDES) == len(self.model_cfg.NUM_FILTERS)
+            assert len(self.model_cfg.LAYER_NUMS) == len(self.model_cfg.LAYER_STRIDES) == len(
+                self.model_cfg.NUM_FILTERS)
             layer_nums = self.model_cfg.LAYER_NUMS
             layer_strides = self.model_cfg.LAYER_STRIDES
             num_filters = self.model_cfg.NUM_FILTERS
         else:
             layer_nums = layer_strides = num_filters = []
 
+        # read up-sampling parameters
         if self.model_cfg.get('UPSAMPLE_STRIDES', None) is not None:
             assert len(self.model_cfg.UPSAMPLE_STRIDES) == len(self.model_cfg.NUM_UPSAMPLE_FILTERS)
             num_upsample_filters = self.model_cfg.NUM_UPSAMPLE_FILTERS
@@ -23,11 +26,11 @@ class BaseBEVBackbone(nn.Module):
         else:
             upsample_strides = num_upsample_filters = []
 
-        num_levels = len(layer_nums)
-        c_in_list = [input_channels, *num_filters[:-1]]
+        num_levels = len(layer_nums)                        # 2
+        c_in_list = [input_channels, *num_filters[:-1]]     # (256, 128) input_channels: 256, num_filters[:-1]: 64, 128
         self.blocks = nn.ModuleList()
         self.deblocks = nn.ModuleList()
-        for idx in range(num_levels):
+        for idx in range(num_levels):                       # The first layer of cur_layers, stride = 2
             cur_layers = [
                 nn.ZeroPad2d(1),
                 nn.Conv2d(
@@ -37,14 +40,16 @@ class BaseBEVBackbone(nn.Module):
                 nn.BatchNorm2d(num_filters[idx], eps=1e-3, momentum=0.01),
                 nn.ReLU()
             ]
-            for k in range(layer_nums[idx]):
+            for k in range(layer_nums[idx]):                # stack convolutional layers according to layer_nums
                 cur_layers.extend([
                     nn.Conv2d(num_filters[idx], num_filters[idx], kernel_size=3, padding=1, bias=False),
                     nn.BatchNorm2d(num_filters[idx], eps=1e-3, momentum=0.01),
                     nn.ReLU()
                 ])
+            # add the layer to the block
+            # parse cur_layers into separate parameters and pass each parameter as input to the function
             self.blocks.append(nn.Sequential(*cur_layers))
-            if len(upsample_strides) > 0:
+            if len(upsample_strides) > 0:                   # constructed up-sampling layer
                 stride = upsample_strides[idx]
                 if stride >= 1:
                     self.deblocks.append(nn.Sequential(
@@ -110,14 +115,17 @@ class BaseBEVBackbone(nn.Module):
             else:
                 ups.append(x)
 
+        # If upsampling exists, then concatenate the upsampling results.
         if len(ups) > 1:
             x = torch.cat(ups, dim=1)
         elif len(ups) == 1:
             x = ups[0]
 
+        # Otherwise
         if len(self.deblocks) > len(self.blocks):
             x = self.deblocks[-1](x)
 
+        # Store the results in spatial_features_3d and return the results.
         data_dict['spatial_features_2d'] = x
 
         return data_dict
