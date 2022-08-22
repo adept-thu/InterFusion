@@ -15,16 +15,22 @@ class PointPillarScatter(nn.Module):
 
     def forward(self, batch_dict, **kwargs):
         if 'pillar_features' in batch_dict:
+            # 拿到经过PointNet处理后的pillar数据和每个pillar艘在点云中的坐标位置
             pillar_features, coords = batch_dict['pillar_features'], batch_dict['voxel_coords']
 
+            # 将转换为伪图像的数据存到该列表中
             # Store the data converted to pseudo-images in this list.
             batch_spatial_features = []
             batch_size = coords[:, 0].max().int().item() + 1
 
+            # 对batch中的每个数据独立进行处理
             # Process each piece of data in the batch sequentially and independently.
             for batch_idx in range(batch_size):
+                # 穿件一个空间坐标，用来接收pillar中的数据
                 # Create a spatial coordinate to receive the data from the pillar.
-                # num_bev_features: the value is 64
+                # self.num_bev_features为64
+                # self.num_bev_features: the value is 64
+                # self.nz * self.nx *self.ny是生成的空间坐标索引的乘积
                 # self.nz * self.nx * self.ny: the product of the generated spatial coordinate indices
                 # pillar feature:
                 spatial_feature = torch.zeros(
@@ -33,28 +39,40 @@ class PointPillarScatter(nn.Module):
                     dtype=pillar_features.dtype,
                     device=pillar_features.device)
 
+                # 从coords[:, 0]提取该batch_idx的数据mask
                 # Extract the data mask of batch_idx from coords[:,0]
                 batch_mask = coords[:, 0] == batch_idx
+                # 提取mask提取坐标
                 # Extracting coordinate information based on mask
                 this_coords = coords[batch_mask, :]
+                # 获取所有非空pillar在伪图像的对应索引位置
                 # Get the position of all the indexes corresponding to the non-empty pillar on the pseudo-image.
                 indices = this_coords[:, 1] + this_coords[:, 2] * self.nx + this_coords[:, 3]
-                indices = indices.type(torch.long)      # converting data types
+                # 转换数据类型
+                # converting data types
+                indices = indices.type(torch.long)
+                # 根据mask提取pillar_features
                 # Extract the pillar_feature based on mask.
                 pillars = pillar_features[batch_mask, :]
                 pillars = pillars.t()
+                # 在索引位置填充pillars
                 # Fill in the index position with pillars.
                 spatial_feature[:, indices] = pillars
+                # 将空间特征加入list
                 # Add spatial features to the list.
                 batch_spatial_features.append(spatial_feature)
 
+            # 在第0个维度将所有的数据堆叠在一起
             # Stack all data in dimension 0
             batch_spatial_features = torch.stack(batch_spatial_features, 0)
+            # reshape回原空间（伪图像）
             # reshape back to the original space, i.e. pseudo-image
             batch_spatial_features = batch_spatial_features.view(batch_size, self.num_bev_features * self.nz, self.ny, self.nx)
+            # 将结果加入batch_dict
             # Add the results to batch_dict
             batch_dict['spatial_features'] = batch_spatial_features
         else:
+            # 对于融合的算法，按照需要对不同模态的数据分别进行处理。
             # Process the information of different modalities in sequence and generate the results.
             lidar_pillar_features, lidar_coords = batch_dict['lidar_pillar_features'], batch_dict['lidar_voxel_coords']
             radar_pillar_features, radar_coords = batch_dict['radar_pillar_features'], batch_dict['radar_voxel_coords']

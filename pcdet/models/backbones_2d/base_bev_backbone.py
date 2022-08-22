@@ -8,6 +8,7 @@ class BaseBEVBackbone(nn.Module):
         super().__init__()
         self.model_cfg = model_cfg
 
+        # 读取下采样层的参数
         # read downsampling parameters
         if self.model_cfg.get('LAYER_NUMS', None) is not None:
             assert len(self.model_cfg.LAYER_NUMS) == len(self.model_cfg.LAYER_STRIDES) == len(
@@ -18,6 +19,7 @@ class BaseBEVBackbone(nn.Module):
         else:
             layer_nums = layer_strides = num_filters = []
 
+        # 读取上采样层的参数
         # read up-sampling parameters
         if self.model_cfg.get('UPSAMPLE_STRIDES', None) is not None:
             assert len(self.model_cfg.UPSAMPLE_STRIDES) == len(self.model_cfg.NUM_UPSAMPLE_FILTERS)
@@ -40,16 +42,22 @@ class BaseBEVBackbone(nn.Module):
                 nn.BatchNorm2d(num_filters[idx], eps=1e-3, momentum=0.01),
                 nn.ReLU()
             ]
-            for k in range(layer_nums[idx]):                # stack convolutional layers according to layer_nums
+            # 根据layer_nums堆叠卷积层
+            # stack convolutional layers according to layer_nums
+            for k in range(layer_nums[idx]):
                 cur_layers.extend([
                     nn.Conv2d(num_filters[idx], num_filters[idx], kernel_size=3, padding=1, bias=False),
                     nn.BatchNorm2d(num_filters[idx], eps=1e-3, momentum=0.01),
                     nn.ReLU()
                 ])
+            # 在block中添加该层
+            # *作用：将列表分解为几个独立的参数，并传入函数中
             # add the layer to the block
-            # parse cur_layers into separate parameters and pass each parameter as input to the function
+            # parse cur_layers into separate parameters and and pass them to the function as input parameters respectively
             self.blocks.append(nn.Sequential(*cur_layers))
-            if len(upsample_strides) > 0:                   # constructed up-sampling layer
+            # 构造上采样层
+            # constructed up-sampling layer
+            if len(upsample_strides) > 0:
                 stride = upsample_strides[idx]
                 if stride >= 1:
                     self.deblocks.append(nn.Sequential(
@@ -115,16 +123,19 @@ class BaseBEVBackbone(nn.Module):
             else:
                 ups.append(x)
 
+        # 如果存在上采样层，连接各上采样层结果
         # If upsampling exists, then concatenate the upsampling results.
         if len(ups) > 1:
             x = torch.cat(ups, dim=1)
         elif len(ups) == 1:
             x = ups[0]
 
+        # 否则
         # Otherwise
         if len(self.deblocks) > len(self.blocks):
             x = self.deblocks[-1](x)
 
+        # 将结果存储在spatial_features_2d中并返回
         # Store the results in spatial_features_3d and return the results.
         data_dict['spatial_features_2d'] = x
 
