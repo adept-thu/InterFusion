@@ -209,6 +209,7 @@ class PillarVFE(VFETemplate):
             batch_dict['pillar_features'] = features
 
         else:
+            # 对于融合的算法，按照需要对不同模态的数据分别进行处理。
             # Process the information of different modalities in sequence and generate the results.
             lidar_voxel_features, lidar_voxel_num_points, lidar_coords = batch_dict['lidar_voxels'], batch_dict['lidar_voxel_num_points'], batch_dict['lidar_voxel_coords']
             radar_voxel_features, radar_voxel_num_points, radar_coords = batch_dict['radar_voxels'], batch_dict['radar_voxel_num_points'], batch_dict['radar_voxel_coords']

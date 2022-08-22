@@ -89,13 +89,37 @@ def nms_gpu(boxes, scores, thresh, pre_maxsize=None, **kwargs):
     :return:
     """
     assert boxes.shape[1] == 7
+    # 对分数按照列下降的顺序进行排序，并获取对应的索引。
+    # 其中，dim = 0为按列排序，dim = 1 按行排序，默认值为dim = 1。
+    # 考虑到scores是在排序后再传入的，因此order是[0,1,2,3,...]。
+    # Sort the scores in descending order by column and get the corresponding indexes.
+    # Where dim = 0 is sorted by column, dim = 1 is sorted by row, and the default value is dim = 1.
+    # Considering that scores are passed in after sorting, the order is [0,1,2,3,...].
     order = scores.sort(0, descending=True)[1]
+    # 如果存在NMS操作前最大的box数量（即4096），应当取出前4096个box索引。
+    # If the maximum number of boxes before the NMS operation exists (i.e. 4096),
+    # the first 4096 box indexes should be taken out.
     if pre_maxsize is not None:
         order = order[:pre_maxsize]
 
+    # 获取NMS前的box，考虑到已经排过序了，不再进行排序操作。
+    # Get the box before NMS.
+    # Considering that it has already been sorted, no more sorting operation is performed.
     boxes = boxes[order].contiguous()
+    # 构造boxes_size的维度的向量
+    # construct the vector of dimensions of boxes_size
     keep = torch.LongTensor(boxes.size(0))
+    # 调用cuda函数进行加速处理。
+    # The cuda function is called for acceleration.
+    # keep：记录保留下来的目标框的下标。
+    # keep: record the subscript of the kept target box.
+    # num_out：返回保留下来的box的个数。
+    # num_out: return the number of kept boxes.
     num_out = iou3d_nms_cuda.nms_gpu(boxes, keep, thresh)
+
+    # 经过iou3d_nms_cuda函数处理后，取出num_out值，目的是为了不使得个数溢出keep的保存的最大值（4096）。
+    # After processing by the iou3d_nms_cuda function, the num_out value is taken out,
+    # in order not to make the number overflow the maximum value (4096) saved by the keep.
     return order[keep[:num_out].cuda()].contiguous(), None
 
 
