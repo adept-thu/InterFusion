@@ -184,28 +184,47 @@ class Detector3DTemplate(nn.Module):
         Returns:
 
         """
+        # post_process_cfg之后处理参数，如NMS类型、阈值、使用设备类型、NMS处理后保留的结果的最大数量，以及输出的置信度等参数的设置。
+        # After post_process_cfg processing parameters such as NMS type,
+        # threshold value, type of device used, maximum number of results retained after NMS processing,
+        # and the confidence level of the output are set.
         post_process_cfg = self.model_cfg.POST_PROCESSING
+        # 推理的结果默认为1。
+        # The result of inference defaults to 1.
         batch_size = batch_dict['batch_size']
+        # 保留用于计算recall的字典
+        # keep the dictionary used to calculate the recall
         recall_dict = {}
+        # 存放预测结果
+        # store forecast results
         pred_dicts = []
+        # 逐帧地处理信息
+        # process information frame by frame
         for index in range(batch_size):
             if batch_dict.get('batch_index', None) is not None:
                 assert batch_dict['batch_box_preds'].shape.__len__() == 2
                 batch_mask = (batch_dict['batch_index'] == index)
             else:
                 assert batch_dict['batch_box_preds'].shape.__len__() == 3
+                # 获取当前处理帧的帧数索引
+                # get the index of the number of frames currently being processed
                 batch_mask = index
-
+            # box_preds, shape: the number of all anchors, 7
             box_preds = batch_dict['batch_box_preds'][batch_mask]
+            # 复制参数，目的是备用于计算recall。
+            # Copy the parameter, which is intended to be used as a backup for calculating the recall.
             src_box_preds = box_preds
 
             if not isinstance(batch_dict['batch_cls_preds'], list):
+                # （所有anchor的数量，3）       # (the number of all anchors, 3)
                 cls_preds = batch_dict['batch_cls_preds'][batch_mask]
-
                 src_cls_preds = cls_preds
                 assert cls_preds.shape[1] in [1, self.num_class]
 
                 if not batch_dict['cls_preds_normalized']:
+                    # 调用损失函数来计算BCE，因此需要调用Sigmoid函数来获取类别概率。
+                    # The loss function is called to calculate the BCE,
+                    # so the Sigmoid function needs to be called to obtain the category probabilities.
                     cls_preds = torch.sigmoid(cls_preds)
             else:
                 cls_preds = [x[batch_mask] for x in batch_dict['batch_cls_preds']]
@@ -213,6 +232,8 @@ class Detector3DTemplate(nn.Module):
                 if not batch_dict['cls_preds_normalized']:
                     cls_preds = [torch.sigmoid(x) for x in cls_preds]
 
+            # 判断是否使用多类别的NMS计算。默认为False。
+            # Determines whether to use multi-category NMS calculations. Default is False.
             if post_process_cfg.NMS_CONFIG.MULTI_CLASSES_NMS:
                 if not isinstance(cls_preds, list):
                     cls_preds = [cls_preds]
@@ -240,32 +261,52 @@ class Detector3DTemplate(nn.Module):
                 final_labels = torch.cat(pred_labels, dim=0)
                 final_boxes = torch.cat(pred_boxes, dim=0)
             else:
+                # 获取类别预测的最大概率，以及对应的索引值。
+                # Get the maximum probability of the category prediction, and the corresponding index value.
                 cls_preds, label_preds = torch.max(cls_preds, dim=-1)
                 if batch_dict.get('has_class_labels', False):
                     label_key = 'roi_labels' if 'roi_labels' in batch_dict else 'batch_pred_labels'
                     label_preds = batch_dict[label_key][index]
                 else:
+                    # 将类别预测值加1。        # Add 1 to the category prediction value.
                     label_preds = label_preds + 1
+                # 无视类别的NMS操作。       # Category-independent NMS operation.
+                # selected：返回了被留下来的anchor的索引。
+                # selected: the index of the anchor that was left behind.
+                # selected_scores：返回了被留下来的anchor的置信度分数。
+                # selected_scores: the confidence score of the anchor that was left.
                 selected, selected_scores = model_nms_utils.class_agnostic_nms(
+                    # 每个anchor的类别的预测概率和anchor的回归参数
+                    # The predicted probability of each anchor's category and the regression parameters of the anchor
                     box_scores=cls_preds, box_preds=box_preds,
                     nms_config=post_process_cfg.NMS_CONFIG,
                     score_thresh=post_process_cfg.SCORE_THRESH
                 )
-
+                # Default = False
                 if post_process_cfg.OUTPUT_RAW_SCORE:
                     max_cls_preds, _ = torch.max(src_cls_preds, dim=-1)
                     selected_scores = max_cls_preds[selected]
 
+                # 获取最终类别的预测分数
+                # get predicted scores for the final category
                 final_scores = selected_scores
+                # 根据selected获取的最终类别的预测结果
+                # the prediction results of the final category obtained from selected
                 final_labels = label_preds[selected]
+                # 根据selected获取的最终box的回归结果
+                # the regression results of the final box obtained according to selected
                 final_boxes = box_preds[selected]
 
+            # 如果在batch_dict中没有GT的标签，将不会计算recall的值。
+            # If there is no GT tag in batch_dict, the value of recall will not be calculated.
             recall_dict = self.generate_recall_record(
                 box_preds=final_boxes if 'rois' not in batch_dict else src_box_preds,
                 recall_dict=recall_dict, batch_index=index, data_dict=batch_dict,
                 thresh_list=post_process_cfg.RECALL_THRESH_LIST
             )
 
+            # 生成最终的预测结果的字典
+            # generate a dictionary of the final prediction results
             record_dict = {
                 'pred_boxes': final_boxes,
                 'pred_scores': final_scores,

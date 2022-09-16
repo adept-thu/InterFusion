@@ -19,25 +19,51 @@ class ResidualCoder(object):
         Returns:
 
         """
+        # 截断anchor的[dx,dy,dz]，每个anchor的l,w,h数值如果小于1e-5，则应为1e-5
+        # Truncate the [dx,dy,dz] of the anchors,
+        # and if the value of each anchor_box parameter l, w, h is less than 1e-5,
+        # then set these parameters to 1e-5.
         anchors[:, 3:6] = torch.clamp_min(anchors[:, 3:6], min=1e-5)
+        # 截断boxes的[dx,dy,dz]，每个gt_boxes的l,w,h数值如果小于1e-5,则应为1e-5
+        # Truncate the [dx,dy,dz] of the boxes,
+        # and if the values of the parameters l, w, h of each GT_boxes are less than 1e-5,
+        # set these parameters to 1e-5.
         boxes[:, 3:6] = torch.clamp_min(boxes[:, 3:6], min=1e-5)
 
+        # 这里表明为torch.split的第二个参数。
+        # split_size应为切分后每一块的大小，而不是切分为多少块
+        # This is indicated as the second argument to torch.split.
+        # torch.split(tensor, split_size, dim=), where split_size is the size of each piece after the cut,
+        # and the extra parameter needs to be received using *cag.
         xa, ya, za, dxa, dya, dza, ra, *cas = torch.split(anchors, 1, dim=-1)
         xg, yg, zg, dxg, dyg, dzg, rg, *cgs = torch.split(boxes, 1, dim=-1)
 
+        # 计算anchor对角线的长度
+        # calculate the diagonal length of the anchor
         diagonal = torch.sqrt(dxa ** 2 + dya ** 2)
+
+        # 计算loss的公式
+        # calculate the parameters △x,△y,△z,△w,△l,△h,△θ of loss by mathematical formula
+        # In the calculation formula, g denotes GT and a denotes anchor.
+        # △x = x ^ gt - xa ^ da
         xt = (xg - xa) / diagonal
+        # △y = (y ^ gt - ya ^ da) / d ^ a
         yt = (yg - ya) / diagonal
+        # △z = (z ^ gt - za ^ da) / h ^ a
         zt = (zg - za) / dza
+        # △l = log(l ^ gt / l ^ a)
         dxt = torch.log(dxg / dxa)
+        # △w = log(w ^ gt / w ^ a)
         dyt = torch.log(dyg / dya)
+        # △h = log(h ^ gt / h ^ a)
         dzt = torch.log(dzg / dza)
+        # False
         if self.encode_angle_by_sincos:
             rt_cos = torch.cos(rg) - torch.cos(ra)
             rt_sin = torch.sin(rg) - torch.sin(ra)
             rts = [rt_cos, rt_sin]
         else:
-            rts = [rg - ra]
+            rts = [rg - ra]     # △θ
 
         cts = [g - a for g, a in zip(cgs, cas)]
         return torch.cat([xt, yt, zt, dxt, dyt, dzt, *rts, *cts], dim=-1)
@@ -51,28 +77,39 @@ class ResidualCoder(object):
         Returns:
 
         """
+        # 这里指torch.split的第二个参数
+        # This refers to the second argument of torch.split.
         xa, ya, za, dxa, dya, dza, ra, *cas = torch.split(anchors, 1, dim=-1)
+        # 分割编码后的box PointPillars为False
         if not self.encode_angle_by_sincos:
             xt, yt, zt, dxt, dyt, dzt, rt, *cts = torch.split(box_encodings, 1, dim=-1)
         else:
             xt, yt, zt, dxt, dyt, dzt, cost, sint, *cts = torch.split(box_encodings, 1, dim=-1)
 
+        # 计算anchor的对角线长度
+        # calculate the diagonal length of the anchor
         diagonal = torch.sqrt(dxa ** 2 + dya ** 2)
+
+        # loss计算中anchor与GT编码运算：g表示gt，a表示anchor
+        # △x = (x^gt - xa^da)/diagonal --> x^gt = △x * diagonal + x^da
         xg = xt * diagonal + xa
         yg = yt * diagonal + ya
         zg = zt * dza + za
 
+        # △l = log(l^gt / l^a)的逆运算 --> l^gt = exp(△l) * l^a
         dxg = torch.exp(dxt) * dxa
         dyg = torch.exp(dyt) * dya
         dzg = torch.exp(dzt) * dza
 
+        # 如果角度是cos和sin编码，采用新的解码方式 PointPillars为False
         if self.encode_angle_by_sincos:
             rg_cos = cost + torch.cos(ra)
             rg_sin = sint + torch.sin(ra)
             rg = torch.atan2(rg_sin, rg_cos)
         else:
+            # rts = [rg - ra] 角度的逆运算
             rg = rt + ra
-
+        # PointPillars没有该项参数
         cgs = [t + a for t, a in zip(cts, cas)]
         return torch.cat([xg, yg, zg, dxg, dyg, dzg, rg, *cgs], dim=-1)
 
@@ -124,20 +161,36 @@ class PreviousResidualRoIDecoder(object):
         Returns:
 
         """
+        # 这里表明为torch.split的第二个参数。
+        # This is indicated as the second argument to torch.split.
+        # torch.split(tensor, split_size, dim=)：这里的split_size是切分后每块的大小，对于多余的参数将使用*cags接收。
+        # Here split_size is the size of each block after slicing,
+        # for the extra parameters will be received using *cags.
         xa, ya, za, dxa, dya, dza, ra, *cas = torch.split(anchors, 1, dim=-1)
         xt, yt, zt, wt, lt, ht, rt, *cts = torch.split(box_encodings, 1, dim=-1)
 
+        # 计算anchor的对角线长度
+        # calculate the diagonal length of the anchor
         diagonal = torch.sqrt(dxa ** 2 + dya ** 2)
+
+        # 在计算公式中，g表示GT，a表示anchor。
+        # In the calculation formula, g denotes GT and a denotes anchor.
+        # △x = (x ^ gt = xa ^ da) / diagonal --> x ^ gt = △x * diagonal + x ^ da
         xg = xt * diagonal + xa
         yg = yt * diagonal + ya
         zg = zt * dza + za
-
+        # △l = log(l ^ gt / l ^ a) --> l ^ gt = exp(△l) * l ^ a
         dxg = torch.exp(lt) * dxa
         dyg = torch.exp(wt) * dya
         dzg = torch.exp(ht) * dza
+        # 如果角度的编码方式为sin和cos形式，应当选择使用新的解码形式。对于PointPillars，默认该形式为False。
+        # If the angle is encoded in sin and cos form,
+        # the new decoding form should be chosen to be used.
+        # For PointPillars, the default form is False.
         rg = ra - rt
-
+        # PointPillars默认为False。     # PointPillars defaults to False.
         cgs = [t + a for t, a in zip(cts, cas)]
+        
         return torch.cat([xg, yg, zg, dxg, dyg, dzg, rg, *cgs], dim=-1)
 
 
