@@ -57,6 +57,7 @@ class DataProcessor(object):
         return data_dict
 
     def transform_points_to_voxels(self, data_dict=None, config=None, voxel_generator=None):
+        # 初始化点云，转换成pillar需要的参数
         # Initialize the parameters needed to convert the point cloud to a pillar.
         if data_dict is None:
             try:
@@ -79,6 +80,9 @@ class DataProcessor(object):
             points = data_dict['points']
             # Generate the output of the pillar.
             voxel_output = voxel_generator.generate(points)
+            # voxels：每个生成的柱子的数据，用维度张量表示为[M,32,4]。
+            # coordinates：每个生成的柱子的直角坐标。用维度张量表示为[M,3]，其中第三维始终为0，即z=0。
+            # num_points：每个生成的柱子的有效点的数量，在维度张量中表示为[M,]。当第二维度的值小于32时，它被填充为0。
             # voxels: data of each generated pillar, represented by the dimension tensor as [M,32,4].
             # coordinates: the right-angle coordinates of each generated pillar,
             # represented by the dimension tensor as [M,3], where the third dimension is always 0, i.e. z=0.
@@ -93,6 +97,7 @@ class DataProcessor(object):
             if not data_dict['use_lead_xyz']:
                 voxels = voxels[..., 3:]  # remove xyz in voxels(N, 3)
         else:
+            # 对于融合的算法，按照需要对不同模态的数据分别进行处理。
             # Generate output voxel_output for different modalities in sequence.
             lidar_points = data_dict['lidar_points']
             radar_points = data_dict['radar_points']
